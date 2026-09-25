@@ -162,15 +162,24 @@ jobs:
             echo "artifactName=shizukuplus-debug.apk" >> $GITHUB_OUTPUT
             echo "filePath=${RENAMED}" >> $GITHUB_OUTPUT
           else
-            CMD="./gradlew :manager:assembleShizukuplusRelease :manager:assembleDropinRelease $ARGS"
-            eval $CMD --stacktrace --info \
-              -x uploadSentryProguardMappingsShizukuplusRelease \
-              -x uploadSentryProguardMappingsDropinRelease \
-              -x uploadSentryNativeSymbolsForShizukuplusRelease \
-              -x uploadSentryNativeSymbolsForDropinRelease \
-              -x sentryUploadSourceBundleShizukuplusRelease \
-              -x sentryUploadSourceBundleDropinRelease \
-              -x :manager:lint
+            # manager/build.gradle only enables Sentry's symbol/source uploads when SENTRY_AUTH_TOKEN
+            # is present (see its `sentry { ... }` block), and the Sentry Android Gradle plugin does
+            # not register the uploadSentry*/sentryUploadSourceBundle* tasks at all while those flags
+            # are off. Gradle treats `-x <task>` naming a task that does not exist as a HARD failure
+            # ("Task '...' not found in root project"), not as a no-op, so passing all six of those
+            # exclusions unconditionally killed this build in ~2 seconds before a single task ran.
+            # That is every fork, and any environment without the Sentry secret configured. Gate them
+            # on the same condition manager/build.gradle uses, so the exclusions are only applied when
+            # the tasks they name actually exist.
+            SENTRY_EXCLUDES=""
+            if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+              SENTRY_EXCLUDES="-x uploadSentryProguardMappingsShizukuplusRelease -x uploadSentryProguardMappingsDropinRelease -x uploadSentryNativeSymbolsForShizukuplusRelease -x uploadSentryNativeSymbolsForDropinRelease -x sentryUploadSourceBundleShizukuplusRelease -x sentryUploadSourceBundleDropinRelease"
+            else
+              echo "SENTRY_AUTH_TOKEN is not set - Sentry upload tasks are disabled, omitting their -x exclusions"
+            fi
+
+            CMD="./gradlew :manager:assembleShizukuplusRelease :manager:assembleDropinRelease $ARGS $SENTRY_EXCLUDES -x :manager:lint"
+            eval $CMD --stacktrace --info
 
             sign_apk() {
               local FILE="$1"
